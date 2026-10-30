@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stock & Sales Tracker</title>
+<style>
+:root{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#172033;background:#f4f6fb}
+*{box-sizing:border-box}body{margin:0}header{background:#172554;color:white;padding:20px 16px}
+main{max-width:1050px;margin:0 auto;padding:16px}.muted{color:#64748b;font-size:.92rem}
+.panel{background:white;border:1px solid #e2e8f0;border-radius:14px;padding:16px;margin:14px 0;box-shadow:0 2px 8px #0f172a08}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+label{display:block;font-weight:600;font-size:.9rem;margin:8px 0 5px}
+input,select,button{font:inherit;width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:9px}
+button{background:#1d4ed8;color:white;border:0;font-weight:700;cursor:pointer;margin-top:10px}
+button.secondary{background:#e2e8f0;color:#172033}
+table{width:100%;border-collapse:collapse;font-size:.92rem}th,td{text-align:left;padding:9px;border-bottom:1px solid #e2e8f0}th{background:#f8fafc}
+.tablewrap{overflow:auto}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.metric{padding:14px;background:#eff6ff;border-radius:10px}.metric strong{font-size:1.35rem;display:block}
+.status{padding:10px;border-radius:8px;background:#f1f5f9;margin-top:10px;white-space:pre-wrap}
+@media(max-width:600px){header h1{font-size:1.35rem}main{padding:10px}.panel{padding:12px}}
+</style></head>
+<body>
+<header><h1>Stock & Sales Tracker</h1><div>Record deliveries, sell bottles, and check remaining stock.</div></header>
+<main>
+<section class="panel">
+<h2>Connect</h2>
+<p class="muted">Paste your deployed Apps Script web app URL and enter the team access PIN.</p>
+<label for="api">Apps Script Web App URL</label><input id="api" placeholder="https://script.google.com/macros/s/.../exec">
+<label for="pin">Team PIN</label><input id="pin" type="password" inputmode="numeric" placeholder="Enter team PIN">
+<div class="grid"><button onclick="saveSettings()">Save connection</button><button class="secondary" onclick="refreshData()">Refresh stock</button></div>
+<div id="status" class="status">Not connected yet.</div>
+</section>
+<section class="panel"><h2>Summary</h2><div class="cards">
+<div class="metric">Products<strong id="mProducts">0</strong></div>
+<div class="metric">Units in stock<strong id="mUnits">0</strong></div>
+<div class="metric">Today's recorded sales<strong id="mSales">K0.00</strong></div>
+</div></section>
+<section class="panel"><h2>Add product</h2><div class="grid">
+<div><label>Product name</label><input id="pName" placeholder="e.g. Mosi"></div>
+<div><label>SKU / short code</label><input id="pSku" placeholder="e.g. MOSI330"></div>
+<div><label>Cost per bottle (K)</label><input id="pCost" type="number" min="0" step=".01" value="0"></div>
+<div><label>Selling price per bottle (K)</label><input id="pPrice" type="number" min="0" step=".01" value="15"></div>
+<div><label>Opening stock (bottles)</label><input id="pOpening" type="number" min="0" step="1" value="0"></div>
+<div><label>Low-stock alert level</label><input id="pReorder" type="number" min="0" step="1" value="5"></div>
+</div><button onclick="addProduct()">Save product</button></section>
+<section class="panel"><h2>Record stock received or bottle sales</h2><div class="grid">
+<div><label>Product</label><select id="tSku"></select></div>
+<div><label>Transaction</label><select id="tType"><option value="SALE">Sale</option><option value="RECEIVE">Stock received</option><option value="ADJUST">Stock adjustment (owner only)</option></select></div>
+<div><label>Quantity (bottles)</label><input id="tQty" type="number" min="1" step="1" value="1"></div>
+<div><label>Unit price (K; optional override for sale)</label><input id="tPrice" type="number" min="0" step=".01" placeholder="Leave blank to use product price"></div>
+<div><label>Recorded by</label><input id="tUser" placeholder="Worker name"></div>
+<div><label>Note (optional)</label><input id="tNote" placeholder="Supplier, receipt, reason..."></div>
+</div><button onclick="recordTransaction()">Save transaction</button>
+<p class="muted">Sales reduce stock automatically. Stock received increases it. Adjustment should only be used to correct a count, with a note.</p></section>
+<section class="panel"><h2>Current stock</h2><div class="tablewrap"><table><thead><tr><th>Product</th><th>SKU</th><th>In stock</th><th>Cost</th><th>Selling price</th><th>Alert</th></tr></thead><tbody id="stockRows"><tr><td colspan="6">Connect and refresh to load stock.</td></tr></tbody></table></div></section>
+<section class="panel"><h2>Recent transactions</h2><div class="tablewrap"><table><thead><tr><th>Date/time</th><th>Product</th><th>Type</th><th>Qty</th><th>Unit price</th><th>Total</th><th>Worker</th></tr></thead><tbody id="txnRows"><tr><td colspan="7">No transactions loaded.</td></tr></tbody></table></div></section>
+</main>
+<script>
+let products=[], transactions=[];
+const $=id=>document.getElementById(id);
+function setStatus(s){$('status').textContent=s}
+function saveSettings(){localStorage.setItem('stockApi',$('api').value.trim());localStorage.setItem('stockPin',$('pin').value);setStatus('Connection settings saved in this browser. Press Refresh stock.')}
+function loadSettings(){$('api').value=localStorage.getItem('stockApi')||'';$('pin').value=localStorage.getItem('stockPin')||''}
+function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function apiUrl(params){const u=new URL($('api').value.trim());Object.entries(params).forEach(([k,v])=>u.searchParams.set(k,v));return u.toString()}
+function jsonp(params){return new Promise((resolve,reject)=>{if(!$('api').value.trim())return reject(new Error('Enter the Apps Script URL first.'));const cb='stockcb_'+Date.now()+'_'+Math.floor(Math.random()*1e6);const s=document.createElement('script');const timer=setTimeout(()=>{cleanup();reject(new Error('Request timed out. Check URL, deployment access and PIN.'))},15000);function cleanup(){clearTimeout(timer);delete window[cb];s.remove()}window[cb]=data=>{cleanup();resolve(data)};s.onerror=()=>{cleanup();reject(new Error('Could not reach Apps Script. Check deployment URL.'))};s.src=apiUrl({...params,callback:cb,_:Date.now()});document.body.appendChild(s)})}
+async function postAction(payload){const url=$('api').value.trim();if(!url)throw new Error('Enter the Apps Script URL first.');await fetch(url,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({...payload,pin:$('pin').value.trim()})});}
+async function refreshData(){try{setStatus('Loading records...');const r=await jsonp({action:'read',pin:$('pin').value.trim()});if(!r.ok)throw new Error(r.error||'Could not load records.');products=r.products||[];transactions=r.transactions||[];render();setStatus('Loaded successfully at '+new Date().toLocaleTimeString()+'.')}catch(e){setStatus('Error: '+e.message)}}
+function render(){const active=products.filter(p=>p.active!==false);$('mProducts').textContent=active.length;$('mUnits').textContent=active.reduce((a,p)=>a+Number(p.stock||0),0);const today=new Date().toDateString();$('mSales').textContent='K'+transactions.filter(t=>t.type==='SALE'&&new Date(t.timestamp).toDateString()===today).reduce((a,t)=>a+Number(t.total||0),0).toFixed(2);
+$('tSku').innerHTML=active.map(p=>`<option value="${esc(p.sku)}">${esc(p.name)} (${esc(p.sku)})</option>`).join('');
+$('stockRows').innerHTML=active.length?active.map(p=>`<tr><td>${esc(p.name)}</td><td>${esc(p.sku)}</td><td><b>${Number(p.stock||0)}</b></td><td>K${Number(p.cost||0).toFixed(2)}</td><td>K${Number(p.price||0).toFixed(2)}</td><td>${Number(p.stock||0)<=Number(p.reorder||0)?'<b style="color:#b91c1c">LOW STOCK</b>':'OK'}</td></tr>`).join(''):'<tr><td colspan="6">No products yet. Add your first product above.</td></tr>';
+$('txnRows').innerHTML=transactions.length?transactions.slice(0,50).map(t=>`<tr><td>${esc(new Date(t.timestamp).toLocaleString())}</td><td>${esc(t.name)}</td><td>${esc(t.type)}</td><td>${Number(t.qty)}</td><td>K${Number(t.unitPrice||0).toFixed(2)}</td><td>K${Number(t.total||0).toFixed(2)}</td><td>${esc(t.user)}</td></tr>`).join(''):'<tr><td colspan="7">No transactions yet.</td></tr>'}
+async function addProduct(){try{const p={action:'addProduct',name:$('pName').value.trim(),sku:$('pSku').value.trim().toUpperCase(),cost:Number($('pCost').value),price:Number($('pPrice').value),opening:Number($('pOpening').value),reorder:Number($('pReorder').value)};if(!p.name||!p.sku)throw new Error('Enter both product name and SKU.');if(![p.cost,p.price,p.opening,p.reorder].every(Number.isFinite)||p.cost<0||p.price<0||p.opening<0||p.reorder<0)throw new Error('Enter valid non-negative numbers.');await postAction(p);setStatus('Product request sent. Refreshing to verify...');setTimeout(refreshData,1800)}catch(e){setStatus('Error: '+e.message)}}
+async function recordTransaction(){try{const t={action:'transaction',sku:$('tSku').value,type:$('tType').value,qty:Number($('tQty').value),unitPrice:$('tPrice').value===''?null:Number($('tPrice').value),user:$('tUser').value.trim(),note:$('tNote').value.trim()};if(!t.sku)throw new Error('Add a product first.');if(!Number.isInteger(t.qty)||t.qty<1)throw new Error('Quantity must be a whole number greater than zero.');if(t.unitPrice!==null&&(!Number.isFinite(t.unitPrice)||t.unitPrice<0))throw new Error('Enter a valid price.');if(!t.user)throw new Error('Enter the worker name.');await postAction(t);setStatus('Transaction request sent. Refreshing to verify...');setTimeout(refreshData,1800)}catch(e){setStatus('Error: '+e.message)}}
+loadSettings();
+</script></body></html>
